@@ -1,0 +1,158 @@
+Voici la procédure complète pour configurer un load balancer avec Nginx sur AWS, en utilisant un VPC avec trois sous-réseaux (un public et deux privés) et en déployant des serveurs Node.js. Suivez ces étapes :
+
+### Étape 1 : Créer un VPC avec des sous-réseaux
+
+1. **Accéder à la console VPC** :
+   - Connectez-vous à votre compte AWS et allez à la console VPC.
+
+2. **Créer un VPC** :
+   - Cliquez sur "Create VPC".
+   - Donnez-lui un nom (par exemple, `my-vpc`).
+   - Définissez un bloc CIDR (par exemple, `10.0.0.0/16`).
+   - Cliquez sur "Create".
+
+3. **Créer les sous-réseaux** :
+   - **Sous-réseau public** :
+     - Cliquez sur "Subnets" puis "Create Subnet".
+     - Donnez-lui un nom (par exemple, `public-subnet`), sélectionnez votre VPC, et attribuez un bloc CIDR (par exemple, `10.0.1.0/24`).
+     - Assurez-vous qu'il soit dans la **Zone de disponibilité 2**.
+   - **Sous-réseau privé 1** :
+     - Répétez l’opération pour créer un sous-réseau privé (nommez-le `private-subnet-1` avec un bloc CIDR comme `10.0.2.0/24` dans la **Zone de disponibilité 1**).
+   - **Sous-réseau privé 2** :
+     - Créez un autre sous-réseau privé (nommez-le `private-subnet-2` avec un bloc CIDR comme `10.0.3.0/24` dans la **Zone de disponibilité 3**).
+
+4. **Configurer la passerelle Internet** :
+   - Créez une passerelle Internet et attachez-la à votre VPC.
+   - Sous "Route Tables", modifiez la table de routage pour le sous-réseau public afin d'ajouter une route vers la passerelle Internet.
+
+### Étape 2 : Lancer des instances EC2
+
+1. **Lancer des instances EC2** :
+   - Lancez trois instances EC2 (par exemple, Amazon Linux 2 ou Ubuntu).
+   - **Pour le sous-réseau public** : 
+     - Lancez une instance (nommez-la `nginx-instance`).
+   - **Pour les sous-réseaux privés** : 
+     - Lancez deux instances (nommez-les `node-instance-1` et `node-instance-2`).
+
+2. **Configurer les groupes de sécurité** :
+   - **Nginx (public)** : Autorisez le trafic HTTP (port 80) et SSH (port 22).
+   - **Node.js (privés)** : Autorisez le trafic interne entre les instances sur les ports 5000 et 5001.
+
+### Étape 3 : Installer Node.js sur les instances privées
+
+1. **Se connecter aux instances privées** et installer Node.js :
+
+   ```bash
+   ssh -i "your-key.pem" ec2-user@<private-instance-public-ip>
+   ```
+
+   Installez Node.js :
+
+   ```bash
+   sudo yum update -y
+   curl -sL https://rpm.nodesource.com/setup_14.x | sudo bash -
+   sudo yum install -y nodejs
+   ```
+
+2. **Créer un serveur Node.js** sur chaque instance :
+
+   Créez un fichier `app.js` :
+
+   ```bash
+   nano app.js
+   ```
+
+   Ajoutez le code suivant :
+
+   ```javascript
+   const express = require('express');
+   const app = express();
+   const port = process.argv[2] || 5000;
+
+   app.get('/', (req, res) => {
+       res.send(`<h1 style="background-color: ${port === '5000' ? 'lightblue' : 'lightgreen'};">Hello World from port ${port}</h1>`);
+   });
+
+   app.listen(port, () => {
+       console.log(`Server running on port ${port}`);
+   });
+   ```
+
+   **Lancer le serveur sur les ports 5000 et 5001** :
+   - Sur `node-instance-1` :
+
+     ```bash
+     node app.js 5000
+     ```
+
+   - Sur `node-instance-2` :
+
+     ```bash
+     node app.js 5001
+     ```
+
+### Étape 4 : Installer Nginx sur l'instance publique
+
+1. **Se connecter à l'instance Nginx** :
+
+   ```bash
+   ssh -i "your-key.pem" ec2-user@<nginx-instance-public-ip>
+   ```
+
+2. **Installer Nginx** :
+
+   ```bash
+   sudo yum update -y
+   sudo amazon-linux-extras install nginx1 -y
+   ```
+
+3. **Configurer Nginx** :
+   Modifiez le fichier de configuration :
+
+   ```bash
+   sudo nano /etc/nginx/nginx.conf
+   ```
+
+   Ajoutez la configuration suivante dans le bloc `http` :
+
+   ```nginx
+   http {
+       upstream node_servers {
+           server <private-instance-1-private-ip>:5000;
+           server <private-instance-2-private-ip>:5001;
+       }
+
+       server {
+           listen 80;
+
+           location / {
+               proxy_pass http://node_servers;
+               proxy_set_header Host $host;
+               proxy_set_header X-Real-IP $remote_addr;
+               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           }
+       }
+   }
+   ```
+
+   Remplacez `<private-instance-1-private-ip>` et `<private-instance-2-private-ip>` par les adresses IP privées de vos instances Node.js.
+
+4. **Démarrer Nginx** :
+
+   ```bash
+   sudo systemctl start nginx
+   sudo systemctl enable nginx
+   ```
+
+### Étape 5 : Tester la configuration
+
+1. **Accéder à Nginx** :
+   Ouvrez un navigateur et accédez à l'adresse IP publique de votre instance Nginx (`http://<nginx-instance-public-ip>`).
+
+2. **Vérifier les réponses** :
+   - Vous devriez voir "Hello World" avec un fond bleu pour le port 5000 (Node.js sur `node-instance-1`).
+   - Les requêtes seront équilibrées entre les deux instances dans les sous-réseaux privés.
+
+### Résumé
+
+Vous avez configuré un système de load balancing avec Nginx sur AWS, utilisant un VPC avec trois sous-réseaux. Vous avez déployé des serveurs Node.js dans les sous-réseaux privés et utilisé Nginx comme load balancer dans le sous-réseau public. Vous pouvez voir cinq pages en fonction de vos instances et de la configuration du load balancer.
